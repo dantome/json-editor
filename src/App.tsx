@@ -1,16 +1,15 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, ChangeEvent } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
-import { availableFields as allAvailableFields } from './availableFields';
+import { availableFields } from './availableFields';
 
-// Helper: Build a tree from a list of fields (which all start with baseKey + ".")
+// Helper: Build a tree from a list of fields (all starting with baseKey + ".")
 function buildTree(baseKey: string, fields: string[]): Record<string, any> {
   const tree: Record<string, any> = {};
   fields.forEach(field => {
-    // Remove the baseKey plus the following dot
-    const remainder = field.substring(baseKey.length + 1);
+    const remainder = field.substring(baseKey.length + 1); // remove baseKey + "."
     const parts = remainder.split('.');
     let node = tree;
-    parts.forEach((part) => {
+    parts.forEach(part => {
       if (!node[part]) {
         node[part] = {};
       }
@@ -21,17 +20,16 @@ function buildTree(baseKey: string, fields: string[]): Record<string, any> {
 }
 
 // Helper: Convert the tree into a snippet string using recursion.
-// `prefix` is the full key up to this level; `indent` is the current indent string.
-function treeToSnippet(prefix: string, tree: Record<string, any>, indent: string): string {
+// Pass the API so that each leaf's value is prefixed.
+function treeToSnippet(prefix: string, tree: Record<string, any>, indent: string, api: string): string {
   let snippet = "";
   for (const key in tree) {
-    const fullField = `${prefix}.${key}`;
+    const newPrefix = `${prefix}.${key}`;
     if (Object.keys(tree[key]).length === 0) {
-      // Leaf: output as a key/value pair.
-      snippet += `${indent}"${key}": "${fullField}",\n`;
+      snippet += `${indent}"${key}": "${api}.${newPrefix}",\n`;
     } else {
       snippet += `${indent}"${key}": {\n`;
-      snippet += treeToSnippet(fullField, tree[key], indent + "  ");
+      snippet += treeToSnippet(newPrefix, tree[key], indent + "  ", api);
       snippet += `${indent}},\n`;
     }
   }
@@ -39,39 +37,40 @@ function treeToSnippet(prefix: string, tree: Record<string, any>, indent: string
 }
 
 const App: React.FC = () => {
-  // State for which APIs are selected (default: all selected)
-  const [selectedApis, setSelectedApis] = useState<string[]>(Object.keys(allAvailableFields));
-  // State for the search query in the left panel
+  // State for selected APIs (default: all selected)
+  const [selectedApis, setSelectedApis] = useState<string[]>(Object.keys(availableFields));
+  // State for search query in the left panel
   const [searchQuery, setSearchQuery] = useState<string>('');
-  // State for fields that have been added to the JSON mapping
+  // State for fields already added (to prevent duplicates)
   const [addedFields, setAddedFields] = useState<string[]>([]);
-  // State to control visibility (expanded/collapsed) for each API group
-  const initialVisibility = Object.keys(allAvailableFields).reduce((acc, api) => {
+  // State to control collapse/expand for each API group
+  const initialVisibility = Object.keys(availableFields).reduce((acc, api) => {
     acc[api] = true;
     return acc;
   }, {} as Record<string, boolean>);
   const [apiVisibility, setApiVisibility] = useState<Record<string, boolean>>(initialVisibility);
+  // Store the current JSON editor content (the schema)
+  const [editorContent, setEditorContent] = useState<string>('{\n  \n}');
+  // State for required input values per API.
+  // Structure: { [apiName]: { [requiredField]: string } }
+  const [apiInputs, setApiInputs] = useState<Record<string, Record<string, string>>>({});
 
-  // Refs for the Monaco editor and instance
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<any>(null);
 
-  // Called when the editor mounts
   const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
-    // Set initial value with proper formatting.
     editor.setValue('{\n  \n}');
-    // Position cursor after the opening bracket.
     editor.setPosition({ lineNumber: 2, column: 3 });
   };
 
-  // Update addedFields based on current JSON keys when editor changes.
+  // Update addedFields and store editor content when changes occur.
   const handleEditorChange = (value?: string) => {
     if (!value) return;
+    setEditorContent(value);
     try {
       const parsed = JSON.parse(value);
-      // For structured objects, also mark all nested keys as added.
       const extractKeys = (obj: any, prefix = ""): string[] => {
         let keys: string[] = [];
         for (const key in obj) {
@@ -88,109 +87,23 @@ const App: React.FC = () => {
       const keys = extractKeys(parsed);
       setAddedFields(keys);
     } catch (error) {
-      // If JSON is invalid, do nothing.
+      // Ignore invalid JSON.
     }
   };
 
-  // Determines the correct indent. If the editor is in its initial state, returns "".
+  // Returns the indent for the current cursor line.
   const getCurrentIndent = (): string => {
     const position = editorRef.current.getPosition();
     if (!position) return '  ';
-    // If at the initial position, remove the extra indent.
     if (position.lineNumber === 2 && position.column === 3) {
       return "";
     }
     const currentLine = editorRef.current.getModel()?.getLineContent(position.lineNumber) || '';
-    const indentMatch = currentLine.match(/^\s*/);
-    return indentMatch ? indentMatch[0] : '  ';
+    const match = currentLine.match(/^\s*/);
+    return match ? match[0] : '  ';
   };
 
-  // Inserts a single field snippet at the current cursor position.
-  const handleFieldClick = (field: string) => {
-    if (!editorRef.current || !monacoRef.current) return;
-    if (addedFields.includes(field)) return; // prevent duplicate
-
-    const position = editorRef.current.getPosition();
-    if (!position) return;
-
-    const currentIndent = getCurrentIndent();
-    const snippet = `"${field}": "${field}",\n${currentIndent}`;
-
-    const range = new monacoRef.current.Range(
-      position.lineNumber,
-      position.column,
-      position.lineNumber,
-      position.column
-    );
-
-    editorRef.current.executeEdits(null, [{
-      range,
-      text: snippet,
-      forceMoveMarkers: true,
-    }]);
-
-    editorRef.current.focus();
-    setAddedFields(prev => [...prev, field]);
-  };
-
-  // Handler to add a base object in flattened mode.
-  const handleAddBaseObjectFlatten = (baseKey: string, api: string) => {
-    if (!editorRef.current || !monacoRef.current) return;
-    const groupFields = allAvailableFields[api];
-    const subfields = groupFields.filter(f => f.startsWith(`${baseKey}.`));
-    if (subfields.length === 0) return;
-    const currentIndent = getCurrentIndent();
-    let snippet = "";
-    subfields.forEach(field => {
-      snippet += `${currentIndent}"${field}": "${field}",\n`;
-    });
-    const range = new monacoRef.current.Range(
-      editorRef.current.getPosition().lineNumber,
-      editorRef.current.getPosition().column,
-      editorRef.current.getPosition().lineNumber,
-      editorRef.current.getPosition().column
-    );
-    editorRef.current.executeEdits(null, [{
-      range,
-      text: snippet,
-      forceMoveMarkers: true,
-    }]);
-    editorRef.current.focus();
-    // Mark all subfields as added.
-    setAddedFields(prev => [...prev, ...subfields]);
-  };
-
-  // Handler to add a base object with nested structure (recursively).
-  const handleAddBaseObjectStructured = (baseKey: string, api: string) => {
-    if (!editorRef.current || !monacoRef.current) return;
-    const groupFields = allAvailableFields[api];
-    const subfields = groupFields.filter(f => f.startsWith(`${baseKey}.`));
-    if (subfields.length === 0) return;
-    const currentIndent = getCurrentIndent();
-
-    // Build a tree from the subfields.
-    const tree = buildTree(baseKey, subfields);
-    // Build a snippet recursively.
-    const structuredContent = treeToSnippet(baseKey, tree, currentIndent + "  ");
-    const snippet = `${currentIndent}"${baseKey}": {\n${structuredContent}${currentIndent}},\n${currentIndent}`;
-
-    const range = new monacoRef.current.Range(
-      editorRef.current.getPosition().lineNumber,
-      editorRef.current.getPosition().column,
-      editorRef.current.getPosition().lineNumber,
-      editorRef.current.getPosition().column
-    );
-    editorRef.current.executeEdits(null, [{
-      range,
-      text: snippet,
-      forceMoveMarkers: true,
-    }]);
-    editorRef.current.focus();
-    // Mark the baseKey and all its subfields as added.
-    setAddedFields(prev => [...prev, baseKey, ...subfields]);
-  };
-
-  // Formats the JSON in the editor with an indent of 2.
+  // Formats the JSON in the editor with 2-space indent.
   const handleFormatJSON = () => {
     if (!editorRef.current) return;
     const value = editorRef.current.getValue();
@@ -203,7 +116,70 @@ const App: React.FC = () => {
     }
   };
 
-  // Clears the JSON editor back to the initial state.
+  // --- Insertion Handlers (all now include the API name) ---
+
+  // Inserts a simple field.
+  const handleFieldClick = (api: string, field: string) => {
+    if (!editorRef.current || !monacoRef.current) return;
+    if (addedFields.includes(field)) return;
+    const position = editorRef.current.getPosition();
+    if (!position) return;
+    const currentIndent = getCurrentIndent();
+    const snippet = `${currentIndent}"${field}": "${api}.${field}",\n${currentIndent}`;
+    const range = new monacoRef.current.Range(
+      position.lineNumber,
+      position.column,
+      position.lineNumber,
+      position.column
+    );
+    editorRef.current.executeEdits(null, [{ range, text: snippet, forceMoveMarkers: true }]);
+    editorRef.current.focus();
+    setAddedFields(prev => [...prev, field]);
+  };
+
+  // Inserts a base object in flattened mode.
+  const handleAddBaseObjectFlatten = (api: string, baseKey: string) => {
+    if (!editorRef.current || !monacoRef.current) return;
+    const groupFields = availableFields[api].outputFields;
+    const subfields = groupFields.filter(f =>
+      f.startsWith(`${baseKey}.`) && !groupFields.some(other => other.startsWith(`${f}.`))
+    );
+    if (subfields.length === 0) return;
+    const currentIndent = getCurrentIndent();
+    let snippet = "";
+    subfields.forEach(field => {
+      snippet += `${currentIndent}"${field}": "${api}.${field}",\n${currentIndent}`;
+    });
+    const pos = editorRef.current.getPosition();
+    if (!pos) return;
+    const range = new monacoRef.current.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column);
+    editorRef.current.executeEdits(null, [{ range, text: snippet, forceMoveMarkers: true }]);
+    editorRef.current.focus();
+    setAddedFields(prev => [...prev, ...subfields]);
+  };
+
+  // Inserts a base object with nested structure.
+  const handleAddBaseObjectStructured = (api: string, baseKey: string) => {
+    if (!editorRef.current || !monacoRef.current) return;
+    const groupFields = availableFields[api].outputFields;
+    const subfields = groupFields.filter(f => f.startsWith(`${baseKey}.`));
+    if (subfields.length === 0) return;
+    const currentIndent = getCurrentIndent();
+    const nestedIndent = currentIndent + "  ";
+    const tree = buildTree(baseKey, subfields);
+    const structuredContent = treeToSnippet(baseKey, tree, nestedIndent, api);
+    const snippet = `${currentIndent}"${baseKey}": {\n${structuredContent}${currentIndent}},\n${currentIndent}`;
+    const pos = editorRef.current.getPosition();
+    if (!pos) return;
+    const range = new monacoRef.current.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column);
+    editorRef.current.executeEdits(null, [{ range, text: snippet, forceMoveMarkers: true }]);
+    editorRef.current.focus();
+    setAddedFields(prev => [...prev, baseKey, ...subfields]);
+  };
+
+  // --- End of Insertion Handlers ---
+
+  // Clears the JSON editor.
   const handleClearJSON = () => {
     if (!editorRef.current) return;
     editorRef.current.setValue('{\n  \n}');
@@ -211,37 +187,73 @@ const App: React.FC = () => {
     setAddedFields([]);
   };
 
-  // Toggles the selection of an API checkbox.
+  // Toggle API checkbox selection.
   const handleToggleApi = (api: string) => {
     setSelectedApis(prev =>
       prev.includes(api) ? prev.filter(item => item !== api) : [...prev, api]
     );
   };
 
-  // Clears the search query.
+  // Clears the search box.
   const handleClearSearch = () => {
     setSearchQuery('');
   };
 
-  // Toggle the visibility (collapse/expand) of an API group.
+  // Toggle collapse/expand for an API group.
   const toggleApiVisibility = (api: string) => {
     setApiVisibility(prev => ({ ...prev, [api]: !prev[api] }));
   };
 
-  // Skeleton function for submitting the JSON to an API.
+  // --- Required Fields UI and Submission ---
+
+  // Determine which APIs are used in the schema (if "api." appears in the editor content).
+  const usedApis = Object.keys(availableFields).filter(api => editorContent.includes(api + "."));
+
+  // Handle changes in required field input.
+  const handleInputChange = (api: string, field: string, e: ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setApiInputs(prev => ({
+      ...prev,
+      [api]: {
+        ...(prev[api] || {}),
+        [field]: value,
+      },
+    }));
+  };
+
+  // Check if every required field (for each used API) is non-empty.
+  const allRequiredFilled = usedApis.every(api => {
+    const required = availableFields[api].requiredFields;
+    return required.every(field => apiInputs[api] && apiInputs[api][field] && apiInputs[api][field].trim() !== "");
+  });
+
+  // On submit, combine the JSON schema from the editor with the API required inputs.
   const handleSubmit = async () => {
     if (!editorRef.current) return;
-    const jsonData = editorRef.current.getValue();
     try {
-      const parsed = JSON.parse(jsonData);
-      // Replace 'YOUR_API_URL' with your actual API endpoint.
-      const response = await fetch('YOUR_API_URL', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsed),
+      const schema = JSON.parse(editorRef.current.getValue());
+      const payload = {
+        schema,
+        apis: {} as Record<string, { inputs: Record<string, string> }>
+      };
+      usedApis.forEach(api => {
+        const required = availableFields[api].requiredFields;
+        payload.apis[api] = {
+          inputs: {}
+        };
+        required.forEach(field => {
+          payload.apis[api].inputs[field] = (apiInputs[api] && apiInputs[api][field]) || "";
+        });
       });
-      const data = await response.json();
-      console.log('API Response:', data);
+      console.log('Payload to submit:', payload);
+      // Uncomment and update below to send to your backend.
+      // const response = await fetch('YOUR_API_URL', {
+      //   method: 'POST',
+      //   headers: { 'Content-Type': 'application/json' },
+      //   body: JSON.stringify(payload),
+      // });
+      // const data = await response.json();
+      // console.log('API Response:', data);
     } catch (error) {
       console.error('Error submitting JSON:', error);
     }
@@ -249,13 +261,13 @@ const App: React.FC = () => {
 
   return (
     <div style={styles.appContainer}>
-      {/* Top Bar: "Available APIs" label and API Checkboxes */}
+      {/* Top Bar with API selection */}
       <div style={styles.topBar}>
         <span style={styles.topBarLabel}>Available APIs</span>
-        {Object.keys(allAvailableFields).map(api => (
+        {Object.keys(availableFields).map(api => (
           <label key={api} style={styles.checkboxLabel}>
-            <input 
-              type="checkbox" 
+            <input
+              type="checkbox"
               checked={selectedApis.includes(api)}
               onChange={() => handleToggleApi(api)}
             />
@@ -265,7 +277,7 @@ const App: React.FC = () => {
       </div>
 
       <div style={styles.mainContainer}>
-        {/* Left Panel: Search Bar and Fields Grouped by API */}
+        {/* Left Panel: Search and Field Selector */}
         <div style={styles.leftPanel}>
           <div style={styles.searchContainer}>
             <input
@@ -282,8 +294,8 @@ const App: React.FC = () => {
             )}
           </div>
           {selectedApis.map(api => {
-            const groupFields = allAvailableFields[api];
-            // Filter fields based on search and not already added.
+            const apiData = availableFields[api];
+            const groupFields = apiData.outputFields;
             const filteredFields = groupFields.filter(field =>
               field.toLowerCase().includes(searchQuery.toLowerCase()) &&
               !addedFields.includes(field)
@@ -293,76 +305,82 @@ const App: React.FC = () => {
               <div key={api} style={styles.apiGroup}>
                 <div style={styles.apiHeaderRow}>
                   <div style={styles.apiHeaderWithToggle}>
-                    <span 
-                      style={styles.toggleIcon}
-                      onClick={() => toggleApiVisibility(api)}
-                    >
+                    <span style={styles.toggleIcon} onClick={() => toggleApiVisibility(api)}>
                       {apiVisibility[api] ? "▼" : "►"}
                     </span>
                     <h4 style={styles.apiHeader}>{api}</h4>
                   </div>
-                  <button style={styles.selectAllButton} onClick={() => {
-                    groupFields.forEach(field => {
-                      if (!addedFields.includes(field)) {
-                        handleFieldClick(field);
-                      }
-                    });
-                  }}>
+                  <button
+                    style={styles.selectAllButton}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      filteredFields.forEach(field => {
+                        handleFieldClick(api, field);
+                      });
+                    }}
+                  >
                     Select All
                   </button>
                 </div>
                 {apiVisibility[api] && (
-                  <ul style={styles.fieldList}>
-                    {filteredFields.map((field, index) => {
-                      // A field is considered a base object if there is at least one other field in the group starting with "field."
-                      const isBaseObject = groupFields.some(sub => sub.startsWith(`${field}.`));
-                      return (
-                        <li 
-                          key={`${field}-${index}`} 
-                          style={styles.fieldItem}
-                          onClick={() => { if (!isBaseObject) handleFieldClick(field); }}
-                        >
-                          <span>{field}</span>
-                          {isBaseObject && (
-                            <div style={styles.baseObjectButtons}>
-                              <button
-                                style={styles.smallButton}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleAddBaseObjectFlatten(field, api);
-                                }}
-                              >
-                                Flatten &amp; Add
-                              </button>
-                              <button
-                                style={styles.smallButton}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleAddBaseObjectStructured(field, api);
-                                }}
-                              >
-                                Add w/ Structure
-                              </button>
-                            </div>
-                          )}
-                          {!isBaseObject && (
-                            <span style={styles.arrow}>→</span>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
+                  <>
+                    {/* Required Inputs line for this API within the collapsible section */}
+                    <div style={styles.apiRequiredFieldsContainer}>
+                      <span style={styles.apiRequiredFieldsTitle}>Required Input(s): </span>
+                      <span style={styles.apiRequiredFieldsList}>
+                        {apiData.requiredFields.join(', ')}
+                      </span>
+                    </div>
+                    <ul style={styles.fieldList}>
+                      {filteredFields.map((field, index) => {
+                        const isBaseObject = groupFields.some(sub => sub.startsWith(`${field}.`));
+                        return (
+                          <li
+                            key={`${field}-${index}`}
+                            style={styles.fieldItem}
+                            onClick={() => { if (!isBaseObject) handleFieldClick(api, field); }}
+                          >
+                            <span>{field}</span>
+                            {isBaseObject && (
+                              <div style={styles.baseObjectButtons}>
+                                <button
+                                  style={styles.smallButton}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAddBaseObjectFlatten(api, field);
+                                  }}
+                                >
+                                  Flatten &amp; Add
+                                </button>
+                                <button
+                                  style={styles.smallButton}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAddBaseObjectStructured(api, field);
+                                  }}
+                                >
+                                  Add w/ Structure
+                                </button>
+                              </div>
+                            )}
+                            {!isBaseObject && (
+                              <span style={styles.arrow}>→</span>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </>
                 )}
               </div>
             );
           })}
         </div>
 
-        {/* Right Panel: Instructions, JSON Editor, and Buttons */}
+        {/* Right Panel: Editor and Required Fields Inputs */}
         <div style={styles.rightPanel}>
           <div style={styles.instructions}>
-            Select the fields on the left that you would like to query, and specify your output schema.
-            When you're ready to fetch the fields, click Submit!
+            Select the fields on the left to build your output schema.
           </div>
           <div style={styles.editorContainer}>
             <Editor
@@ -377,14 +395,37 @@ const App: React.FC = () => {
               }}
             />
           </div>
+          {/* Required Fields Inputs */}
+          <div style={styles.requiredInputsContainer}>
+            <h4 style={styles.requiredInputsTitle}>API Required Inputs</h4>
+            {usedApis.length === 0 ? (
+              <p style={{ margin: 0 }}>No API inputs required (no API prefix found in schema yet).</p>
+            ) : (
+              usedApis.map(api => {
+                const required = availableFields[api].requiredFields;
+                return required.map(field => (
+                  <div key={`${api}-${field}`} style={styles.requiredFieldRow}>
+                    <label style={styles.requiredFieldLabel}>{field}:</label>
+                    <input
+                      type="text"
+                      value={(apiInputs[api] && apiInputs[api][field]) || ''}
+                      onChange={(e) => handleInputChange(api, field, e)}
+                      style={styles.requiredFieldInput}
+                    />
+                    <span style={styles.requiredFieldApi}>{api}</span>
+                  </div>
+                ));
+              })
+            )}
+          </div>
           <div style={styles.buttonBar}>
-            <button style={styles.clearButton} onClick={handleClearJSON}>
-              Clear
-            </button>
-            <button style={styles.formatButton} onClick={handleFormatJSON}>
-              Format JSON
-            </button>
-            <button style={styles.submitButton} onClick={handleSubmit}>
+            <button style={styles.clearButton} onClick={handleClearJSON}>Clear</button>
+            <button style={styles.formatButton} onClick={handleFormatJSON}>Format JSON</button>
+            <button
+              style={{ ...styles.submitButton, opacity: allRequiredFilled ? 1 : 0.5, cursor: allRequiredFilled ? 'pointer' : 'not-allowed' }}
+              onClick={handleSubmit}
+              disabled={!allRequiredFilled}
+            >
               Submit
             </button>
           </div>
@@ -396,9 +437,11 @@ const App: React.FC = () => {
 
 const styles: { [key: string]: React.CSSProperties } = {
   appContainer: {
-    display: 'flex',
-    flexDirection: 'column',
+    margin: 0,
+    padding: 0,
+    width: '100vw',
     height: '100vh',
+    overflow: 'hidden',
     fontFamily: 'Arial, sans-serif',
     backgroundColor: '#f0f2f5',
   },
@@ -472,7 +515,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   toggleIcon: {
     cursor: 'pointer',
     fontSize: '16px',
-    color: '#007bff',
+    color: '#000',
   },
   apiHeader: {
     fontSize: '16px',
@@ -521,6 +564,19 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginLeft: '10px',
     color: '#888',
   },
+  apiRequiredFieldsContainer: {
+    marginTop: '5px',
+    marginBottom: '10px',
+  },
+  apiRequiredFieldsTitle: {
+    fontWeight: 'bold',
+    fontSize: '14px',
+    marginRight: '4px',
+  },
+  apiRequiredFieldsList: {
+    fontSize: '14px',
+    color: '#555',
+  },
   rightPanel: {
     width: '70%',
     display: 'flex',
@@ -528,6 +584,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '1rem',
     backgroundColor: '#fff',
     boxShadow: '-2px 0 5px rgba(0,0,0,0.1)',
+    overflowY: 'auto',
   },
   instructions: {
     marginBottom: '10px',
@@ -544,6 +601,39 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderRadius: '4px',
     overflow: 'hidden',
     marginBottom: '10px',
+  },
+  requiredInputsContainer: {
+    padding: '1rem',
+    border: '1px solid #ccc',
+    borderRadius: '4px',
+    marginBottom: '10px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  requiredInputsTitle: {
+    margin: '0 0 8px 0',
+    fontSize: '16px',
+    fontWeight: 'bold',
+  },
+  requiredFieldRow: {
+    display: 'flex',
+    alignItems: 'center',
+  },
+  requiredFieldLabel: {
+    width: '150px',
+    marginRight: '12px',
+    fontWeight: 'bold',
+  },
+  requiredFieldInput: {
+    width: '60%',
+    padding: '4px',
+    fontSize: '14px',
+  },
+  requiredFieldApi: {
+    marginLeft: 'auto',
+    fontWeight: 'bold',
+    color: '#555',
   },
   buttonBar: {
     display: 'flex',
@@ -574,7 +664,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: 'none',
     padding: '10px 20px',
     borderRadius: '4px',
-    cursor: 'pointer',
     fontSize: '16px',
   },
 };
