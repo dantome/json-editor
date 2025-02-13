@@ -322,55 +322,53 @@ const App: React.FC = () => {
                     Select All
                   </button>
                 </div>
+                {/* Required Inputs line for this API */}
+                <div style={styles.apiRequiredFieldsContainer}>
+                  <span style={styles.apiRequiredFieldsTitle}>Required Input(s): </span>
+                  <span style={styles.apiRequiredFieldsList}>
+                    {apiData.requiredFields.join(', ')}
+                  </span>
+                </div>
                 {apiVisibility[api] && (
-                  <>
-                    {/* Required Inputs line for this API within the collapsible section */}
-                    <div style={styles.apiRequiredFieldsContainer}>
-                      <span style={styles.apiRequiredFieldsTitle}>Required Input(s): </span>
-                      <span style={styles.apiRequiredFieldsList}>
-                        {apiData.requiredFields.join(', ')}
-                      </span>
-                    </div>
-                    <ul style={styles.fieldList}>
-                      {filteredFields.map((field, index) => {
-                        const isBaseObject = groupFields.some(sub => sub.startsWith(`${field}.`));
-                        return (
-                          <li
-                            key={`${field}-${index}`}
-                            style={styles.fieldItem}
-                            onClick={() => { if (!isBaseObject) handleFieldClick(api, field); }}
-                          >
-                            <span>{field}</span>
-                            {isBaseObject && (
-                              <div style={styles.baseObjectButtons}>
-                                <button
-                                  style={styles.smallButton}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleAddBaseObjectFlatten(api, field);
-                                  }}
-                                >
-                                  Flatten &amp; Add
-                                </button>
-                                <button
-                                  style={styles.smallButton}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleAddBaseObjectStructured(api, field);
-                                  }}
-                                >
-                                  Add w/ Structure
-                                </button>
-                              </div>
-                            )}
-                            {!isBaseObject && (
-                              <span style={styles.arrow}>→</span>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </>
+                  <ul style={styles.fieldList}>
+                    {filteredFields.map((field, index) => {
+                      const isBaseObject = groupFields.some(sub => sub.startsWith(`${field}.`));
+                      return (
+                        <li
+                          key={`${field}-${index}`}
+                          style={styles.fieldItem}
+                          onClick={() => { if (!isBaseObject) handleFieldClick(api, field); }}
+                        >
+                          <span>{field}</span>
+                          {isBaseObject && (
+                            <div style={styles.baseObjectButtons}>
+                              <button
+                                style={styles.smallButton}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleAddBaseObjectFlatten(api, field);
+                                }}
+                              >
+                                Flatten &amp; Add
+                              </button>
+                              <button
+                                style={styles.smallButton}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleAddBaseObjectStructured(api, field);
+                                }}
+                              >
+                                Add w/ Structure
+                              </button>
+                            </div>
+                          )}
+                          {!isBaseObject && (
+                            <span style={styles.arrow}>→</span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
                 )}
               </div>
             );
@@ -437,11 +435,11 @@ const App: React.FC = () => {
 
 const styles: { [key: string]: React.CSSProperties } = {
   appContainer: {
-    margin: 0,
+    margin: 0, // remove any outer margin/padding
     padding: 0,
-    width: '100vw',
+    display: 'flex',
+    flexDirection: 'column',
     height: '100vh',
-    overflow: 'hidden',
     fontFamily: 'Arial, sans-serif',
     backgroundColor: '#f0f2f5',
   },
@@ -515,7 +513,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   toggleIcon: {
     cursor: 'pointer',
     fontSize: '16px',
-    color: '#000',
+    color: '#000', // updated to black
   },
   apiHeader: {
     fontSize: '16px',
@@ -564,6 +562,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginLeft: '10px',
     color: '#888',
   },
+  // Left panel: Required fields text (now comma separated)
   apiRequiredFieldsContainer: {
     marginTop: '5px',
     marginBottom: '10px',
@@ -584,7 +583,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '1rem',
     backgroundColor: '#fff',
     boxShadow: '-2px 0 5px rgba(0,0,0,0.1)',
-    overflowY: 'auto',
   },
   instructions: {
     marginBottom: '10px',
@@ -596,7 +594,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#333',
   },
   editorContainer: {
-    height: '500px',
+    flex: 1,
     border: '1px solid #ccc',
     borderRadius: '4px',
     overflow: 'hidden',
@@ -622,7 +620,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   requiredFieldLabel: {
     width: '150px',
-    marginRight: '12px',
+    marginRight: '12px', // increased margin for extra spacing
     fontWeight: 'bold',
   },
   requiredFieldInput: {
@@ -664,6 +662,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: 'none',
     padding: '10px 20px',
     borderRadius: '4px',
+    cursor: 'pointer',
     fontSize: '16px',
   },
 };
