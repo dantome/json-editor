@@ -1,0 +1,17 @@
+{
+  "accountReferenceId": "accountReferenceId",
+  "acquirerReferenceNumber": "acquirerReferenceNumber",
+  "activeTodayApprovedAmount": "activeTodayApprovedAmount",
+  "activeTodayApprovedCount": "activeTodayApprovedCount",
+  "airTravelDetails.departureDate": "airTravelDetails.departureDate",
+  "airTravelDetails.issuingCarrier": "airTravelDetails.issuingCarrier",
+  "airTravelDetails.passengerName": "airTravelDetails.passengerName",
+  "airTravelDetails.restrictedTicketCode": "airTravelDetails.restrictedTicketCode",
+  "airTravelDetails.ticketNumber": "airTravelDetails.ticketNumber",
+  "airTravelDetails.travelAgencyCode": "airTravelDetails.travelAgencyCode",
+  "claim": {
+      "accountReferenceId": "accountReferenceId",
+      "acquirerReferenceNumber": "acquirerReferenceNumber",
+      "activeTodayApprovedAmount": "activeTodayApprovedAmount"
+  }
+}
