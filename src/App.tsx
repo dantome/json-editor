@@ -51,9 +51,10 @@ const App: React.FC = () => {
   const [apiVisibility, setApiVisibility] = useState<Record<string, boolean>>(initialVisibility);
   // Store the current JSON editor content (the schema)
   const [editorContent, setEditorContent] = useState<string>('{\n  \n}');
-  // State for required input values per API.
-  // Structure: { [apiName]: { [requiredField]: string } }
-  const [apiInputs, setApiInputs] = useState<Record<string, Record<string, string>>>({});
+  // NEW: Global state for required inputs (merged across APIs)
+  const [globalInputs, setGlobalInputs] = useState<Record<string, string>>({});
+  // NEW: State to track if the JSON in the editor is valid
+  const [isJsonValid, setIsJsonValid] = useState<boolean>(true);
 
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<any>(null);
@@ -71,6 +72,7 @@ const App: React.FC = () => {
     setEditorContent(value);
     try {
       const parsed = JSON.parse(value);
+      setIsJsonValid(true);
       const extractKeys = (obj: any, prefix = ""): string[] => {
         let keys: string[] = [];
         for (const key in obj) {
@@ -87,7 +89,8 @@ const App: React.FC = () => {
       const keys = extractKeys(parsed);
       setAddedFields(keys);
     } catch (error) {
-      // Ignore invalid JSON.
+      setIsJsonValid(false);
+      // When JSON is invalid, we don't update the addedFields.
     }
   };
 
@@ -209,25 +212,23 @@ const App: React.FC = () => {
   // Determine which APIs are used in the schema (if "api." appears in the editor content).
   const usedApis = Object.keys(availableFields).filter(api => editorContent.includes(api + "."));
 
-  // Handle changes in required field input.
-  const handleInputChange = (api: string, field: string, e: ChangeEvent<HTMLInputElement>) => {
+  // NEW: Compute the unique required fields across all used APIs
+  const uniqueRequiredFields: string[] = Array.from(
+    new Set(usedApis.flatMap(api => availableFields[api].requiredFields))
+  );
+
+  // NEW: Global change handler for required field inputs.
+  const handleInputChange = (field: string, e: ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    setApiInputs(prev => ({
-      ...prev,
-      [api]: {
-        ...(prev[api] || {}),
-        [field]: value,
-      },
-    }));
+    setGlobalInputs(prev => ({ ...prev, [field]: value }));
   };
 
-  // Check if every required field (for each used API) is non-empty.
-  const allRequiredFilled = usedApis.every(api => {
-    const required = availableFields[api].requiredFields;
-    return required.every(field => apiInputs[api] && apiInputs[api][field] && apiInputs[api][field].trim() !== "");
-  });
+  // Check if every required field (merged across all used APIs) is non-empty.
+  const allRequiredFilled = uniqueRequiredFields.every(field => 
+    globalInputs[field] && globalInputs[field].trim() !== ""
+  );
 
-  // On submit, combine the JSON schema from the editor with the API required inputs.
+  // On submit, combine the JSON schema from the editor with the global required inputs.
   const handleSubmit = async () => {
     if (!editorRef.current) return;
     try {
@@ -242,7 +243,8 @@ const App: React.FC = () => {
           inputs: {}
         };
         required.forEach(field => {
-          payload.apis[api].inputs[field] = (apiInputs[api] && apiInputs[api][field]) || "";
+          // Use the same global input for all APIs that require this field.
+          payload.apis[api].inputs[field] = globalInputs[field] || "";
         });
       });
       console.log('Payload to submit:', payload);
@@ -393,36 +395,36 @@ const App: React.FC = () => {
               }}
             />
           </div>
-          {/* Required Fields Inputs */}
+          {/* --- Merged Required Fields Inputs --- */}
           <div style={styles.requiredInputsContainer}>
             <h4 style={styles.requiredInputsTitle}>API Required Inputs</h4>
-            {usedApis.length === 0 ? (
+            {uniqueRequiredFields.length === 0 ? (
               <p style={{ margin: 0 }}>No API inputs required (no API prefix found in schema yet).</p>
             ) : (
-              usedApis.map(api => {
-                const required = availableFields[api].requiredFields;
-                return required.map(field => (
-                  <div key={`${api}-${field}`} style={styles.requiredFieldRow}>
-                    <label style={styles.requiredFieldLabel}>{field}:</label>
-                    <input
-                      type="text"
-                      value={(apiInputs[api] && apiInputs[api][field]) || ''}
-                      onChange={(e) => handleInputChange(api, field, e)}
-                      style={styles.requiredFieldInput}
-                    />
-                    <span style={styles.requiredFieldApi}>{api}</span>
-                  </div>
-                ));
-              })
+              uniqueRequiredFields.map(field => (
+                <div key={field} style={styles.requiredFieldRow}>
+                  <label style={styles.requiredFieldLabel}>{field}:</label>
+                  <input
+                    type="text"
+                    value={globalInputs[field] || ''}
+                    onChange={(e) => handleInputChange(field, e)}
+                    style={styles.requiredFieldInput}
+                  />
+                </div>
+              ))
             )}
           </div>
           <div style={styles.buttonBar}>
             <button style={styles.clearButton} onClick={handleClearJSON}>Clear</button>
             <button style={styles.formatButton} onClick={handleFormatJSON}>Format JSON</button>
             <button
-              style={{ ...styles.submitButton, opacity: allRequiredFilled ? 1 : 0.5, cursor: allRequiredFilled ? 'pointer' : 'not-allowed' }}
+              style={{ 
+                ...styles.submitButton, 
+                opacity: (allRequiredFilled && isJsonValid) ? 1 : 0.5, 
+                cursor: (allRequiredFilled && isJsonValid) ? 'pointer' : 'not-allowed' 
+              }}
               onClick={handleSubmit}
-              disabled={!allRequiredFilled}
+              disabled={!(allRequiredFilled && isJsonValid)}
             >
               Submit
             </button>
@@ -513,7 +515,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   toggleIcon: {
     cursor: 'pointer',
     fontSize: '16px',
-    color: '#000', // updated to black
+    color: '#000',
   },
   apiHeader: {
     fontSize: '16px',
@@ -562,7 +564,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginLeft: '10px',
     color: '#888',
   },
-  // Left panel: Required fields text (now comma separated)
   apiRequiredFieldsContainer: {
     marginTop: '5px',
     marginBottom: '10px',
@@ -620,18 +621,13 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   requiredFieldLabel: {
     width: '150px',
-    marginRight: '12px', // increased margin for extra spacing
+    marginRight: '12px',
     fontWeight: 'bold',
   },
   requiredFieldInput: {
     width: '60%',
     padding: '4px',
     fontSize: '14px',
-  },
-  requiredFieldApi: {
-    marginLeft: 'auto',
-    fontWeight: 'bold',
-    color: '#555',
   },
   buttonBar: {
     display: 'flex',

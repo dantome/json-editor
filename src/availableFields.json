@@ -1,6 +1,6 @@
 {
   "cpal-account-api": {
-    "requiredFields": ["accountReferenceId"],
+    "requiredFields": ["accountReferenceId", "claimTransactionId"],
     "outputFields": [
       "accountReferenceId",
       "acquirerReferenceNumber",
